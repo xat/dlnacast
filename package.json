@@ -1,6 +1,6 @@
 {
   "name": "dlnacast",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "cast local media to your TV using DLNA",
   "main": "index.js",
   "bin": {
