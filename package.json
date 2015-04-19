@@ -1,0 +1,32 @@
+{
+  "name": "dlnacast",
+  "version": "0.0.1",
+  "description": "cast local media to your TV using DLNA",
+  "main": "index.js",
+  "bin": {
+    "dlnacast": "./index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xat/dlnacast"
+  },
+  "author": "Simon Kusterer",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/xat/dlnacast/issues"
+  },
+  "homepage": "https://github.com/xat/dlnacast",
+  "dependencies": {
+    "get-port": "^1.0.0",
+    "internal-ip": "^1.0.0",
+    "keypress": "^0.2.1",
+    "mime": "^1.3.4",
+    "minimist": "^1.1.1",
+    "node-ssdp": "^2.0.1",
+    "range-parser": "^1.0.2",
+    "upnp-mediarenderer-client": "^1.0.0"
+  }
+}
