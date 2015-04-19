@@ -1,6 +1,6 @@
 # dlnacast
 
-Cast local media to your TV through DLNA.
+Cast local media to your TV through UPnP/DLNA.
 Based on thibauts [node-upnp-mediarenderer-client](https://github.com/thibauts/node-upnp-mediarenderer-client).
 
 ### usage
