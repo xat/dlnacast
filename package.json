@@ -31,6 +31,6 @@
     "range-parser": "^1.0.2",
     "renderer-finder": "^0.1.0",
     "static-file-server": "0.0.4",
-    "upnp-mediarenderer-client": "git+https://github.com/thibauts/node-upnp-mediarenderer-client.git"
+    "upnp-mediarenderer-client": "https://registry.npmjs.org/upnp-mediarenderer-client/-/upnp-mediarenderer-client-1.0.0.tgz"
   }
 }
