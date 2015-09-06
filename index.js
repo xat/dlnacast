@@ -66,7 +66,7 @@ module.exports = {
   },
   renderMedia: function(file, type, address, subtitle){
     var cli = null;
-    
+
     if (address){
       startSender(null, address);
     }else{
@@ -76,7 +76,8 @@ module.exports = {
     function startSender(err, loc) {
       if (err) {
         console.log(err);
-        process.exit();
+        if (require.main === module)
+          process.exit();
       }
       cli = new MediaRendererClient(loc);
       var subtitlePath = subtitle;
@@ -108,9 +109,11 @@ module.exports = {
 
       function runDLNA(fileUrl, subUrl, stat){
 
-        keypress(process.stdin);
-        process.stdin.setRawMode(true);
-        process.stdin.resume();
+        if (require.main === module){
+          keypress(process.stdin);
+          process.stdin.setRawMode(true);
+          process.stdin.resume();
+        }
         var isPlaying = false;
 
         cli.load(fileUrl, {
@@ -135,23 +138,25 @@ module.exports = {
         });
 
         cli.on('stopped', function () {
-          process.exit();
-        });
-
-
-        process.stdin.on('keypress', function (ch, key) {
-          if (key && key.name && key.name === 'space') {
-            if (isPlaying) {
-              cli.pause();
-            } else {
-              cli.play();
-            }
-          }
-
-          if (key && key.ctrl && key.name === 'c') {
+          if (require.main === module)
             process.exit();
-          }
         });
+
+        if (require.main === module){
+          process.stdin.on('keypress', function (ch, key) {
+            if (key && key.name && key.name === 'space') {
+              if (isPlaying) {
+                cli.pause();
+              } else {
+                cli.play();
+              }
+            }
+
+            if (key && key.ctrl && key.name === 'c') {
+              process.exit();
+            }
+          });
+        }
       }
       return cli;
     }
