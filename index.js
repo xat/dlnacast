@@ -14,12 +14,8 @@ var opts = minimist(process.argv.slice(2));
 var MediaRendererClient = require('upnp-mediarenderer-client');
 var smfs = require('static-file-server');
 var path = require('path');
+//require.main === module
 
-if (!opts._.length && !opts.listRenderer) {
-  console.log('Usage: dlnacast [--type <mime>] [--address <tv-ip>] [--subtitle <file>] <file>');
-  console.log('Usage: dlnacast --listRenderer');
-  process.exit();
-}
 
 function DIDLMetadata(url, type, title, subtitle) {
   var DIDL = '';
@@ -53,101 +49,130 @@ var discover = function (cb) {
   }, 5000);
 };
 
-if (opts.listRenderer){
-  var finder = new RendererFinder();
 
-  finder.on('found', function(info, msg, desc){
-    console.log(desc.device.friendlyName + ": " + msg.Location);
-  });
+module.exports = {
+  listRenderer: function(cb){
+    var finder = new RendererFinder();
 
-  finder.start(true);
-}else{
-  if (opts.address){
-    startSender(null, opts.address);
-  }else{
-    discover(startSender);
-  }
-
-  function startSender(err, loc) {
-    if (err) {
-      console.log(err);
-      process.exit();
-    }
-
-    var subtitlePath = opts.subtitle;
-    var filePath = opts._[0];
-    var stat = fs.statSync(filePath);
-    stat.type = stat.type || mime.lookup(filePath);
-    var firstHeaders = {
-      'Access-Control-Allow-Origin': '*',
-      'transferMode.dlna.org': 'Streaming',
-      'contentFeatures.dlna.org': 'DLNA.ORG_PN=AVC_MP4_HP_HD_AAC;DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000'
-    };
-
-    //If the is a subtitle to load, load that first and the the media
-    //This is requires to provide the subtitle headers
-    smfs.serve(subtitlePath ? subtitlePath : filePath, {
-      headers: firstHeaders
-    },function(err, firstUrl){
-      if (subtitlePath){
-        firstHeaders['CaptionInfo.sec'] = firstUrl;
-        smfs.serve(filePath, {
-          headers: firstHeaders
-        }, function(err, secondUrl){
-          runDLNA(secondUrl, firstUrl, stat);
-        }, firstUrl);
-      }else{
-        runDLNA(firstUrl, null, stat);
-      }
+    finder.on('found', function(info, msg, desc){
+      cb(undefined, info, msg, desc);
     });
 
-    function runDLNA(fileUrl, subUrl, stat){
+    finder.on('error', function(err){
+      cb(err);
+    });
 
-      keypress(process.stdin);
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-      var isPlaying = false;
-
-      var cli = new MediaRendererClient(loc);
-      cli.load(fileUrl, {
-        autoplay: true,
-        contentType: stat.type,
-        metadata: DIDLMetadata(fileUrl, stat.type, path.basename(filePath), subUrl)
-      }, function (err, result) {
-        if (err) {
-          console.log(err.message);
-          //process.exit();
-        }
-        console.log('playing: ', path.basename(filePath));
-        console.log('use your space-key to toggle between play and pause');
-      });
-
-      cli.on('playing', function () {
-        isPlaying = true;
-      });
-
-      cli.on('paused', function () {
-        isPlaying = false;
-      });
-
-      cli.on('stopped', function () {
-        process.exit();
-      });
-
-
-      process.stdin.on('keypress', function (ch, key) {
-        if (key && key.name && key.name === 'space') {
-          if (isPlaying) {
-            cli.pause();
-          } else {
-            cli.play();
-          }
-        }
-
-        if (key && key.ctrl && key.name === 'c') {
-          process.exit();
-        }
-      });
+    return finder.start(true);
+  },
+  renderMedia: function(file, type, address, subtitle){
+    var cli = null;
+    
+    if (address){
+      startSender(null, address);
+    }else{
+      discover(startSender);
     }
+
+    function startSender(err, loc) {
+      if (err) {
+        console.log(err);
+        process.exit();
+      }
+      cli = new MediaRendererClient(loc);
+      var subtitlePath = subtitle;
+      var filePath = file;
+      var stat = fs.statSync(filePath);
+      stat.type = stat.type || mime.lookup(filePath);
+      var firstHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'transferMode.dlna.org': 'Streaming',
+        'contentFeatures.dlna.org': 'DLNA.ORG_PN=AVC_MP4_HP_HD_AAC;DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000'
+      };
+
+      //If the is a subtitle to load, load that first and the the media
+      //This is requires to provide the subtitle headers
+      smfs.serve(subtitlePath ? subtitlePath : filePath, {
+        headers: firstHeaders
+      },function(err, firstUrl){
+        if (subtitlePath){
+          firstHeaders['CaptionInfo.sec'] = firstUrl;
+          smfs.serve(filePath, {
+            headers: firstHeaders
+          }, function(err, secondUrl){
+            runDLNA(secondUrl, firstUrl, stat);
+          }, firstUrl);
+        }else{
+          runDLNA(firstUrl, null, stat);
+        }
+      });
+
+      function runDLNA(fileUrl, subUrl, stat){
+
+        keypress(process.stdin);
+        process.stdin.setRawMode(true);
+        process.stdin.resume();
+        var isPlaying = false;
+
+        cli.load(fileUrl, {
+          autoplay: true,
+          contentType: stat.type,
+          metadata: DIDLMetadata(fileUrl, stat.type, path.basename(filePath), subUrl)
+        }, function (err, result) {
+          if (err) {
+            console.log(err.message);
+            //process.exit();
+          }
+          console.log('playing: ', path.basename(filePath));
+          console.log('use your space-key to toggle between play and pause');
+        });
+
+        cli.on('playing', function () {
+          isPlaying = true;
+        });
+
+        cli.on('paused', function () {
+          isPlaying = false;
+        });
+
+        cli.on('stopped', function () {
+          process.exit();
+        });
+
+
+        process.stdin.on('keypress', function (ch, key) {
+          if (key && key.name && key.name === 'space') {
+            if (isPlaying) {
+              cli.pause();
+            } else {
+              cli.play();
+            }
+          }
+
+          if (key && key.ctrl && key.name === 'c') {
+            process.exit();
+          }
+        });
+      }
+      return cli;
+    }
+  }
+};
+
+
+//check if the module is called from a terminal of required from anothe module
+if (require.main === module){
+
+  if (!opts._.length && !opts.listRenderer) {
+    console.log('Usage: dlnacast [--type <mime>] [--address <tv-ip>] [--subtitle <file>] <file>');
+    console.log('Usage: dlnacast --listRenderer');
+    process.exit();
+  }
+
+  if (opts.listRenderer){
+    module.exports.listRenderer(function(err, info, msg, desc){
+      console.log(desc.device.friendlyName + ": " + msg.Location);
+    });
+  }else{
+    module.exports.renderMedia(opts._[0], opts.type, opts.address, opts.subtitle);
   }
 }
