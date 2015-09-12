@@ -1,136 +1,190 @@
 #!/usr/bin/env node
 
 var minimist = require('minimist')
-var Client = require('node-ssdp').Client
-var internalIp = require('internal-ip')
-var getPort = require('get-port')
+var RendererFinder = require('renderer-finder')
 var fs = require('fs')
-var http = require('http')
-var rangeParser = require('range-parser')
 var keypress = require('keypress')
 var mime = require('mime')
-var noop = function () {}
 var opts = minimist(process.argv.slice(2))
 var MediaRendererClient = require('upnp-mediarenderer-client')
+var smfs = require('static-file-server')
+var path = require('path')
 
-if (!opts._.length) {
-  console.log('Usage: dlnacast [--type <mime>] [--address <tv-ip>] <file>')
-  process.exit()
+function DIDLMetadata (url, type, title, subtitle) {
+  var DIDL = ''
+  DIDL = DIDL + '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:sec="http://www.sec.co.kr/">'
+  DIDL = DIDL + '  <item id="f-0" parentID="0" restricted="0">'
+  DIDL = DIDL + '    <dc:title>' + title + '</dc:title>'
+  if (subtitle) {
+    DIDL = DIDL + '    <sec:CaptionInfo sec:type="srt">' + subtitle + '</sec:CaptionInfo>'
+    DIDL = DIDL + '    <sec:CaptionInfoEx sec:type="srt">' + subtitle + '</sec:CaptionInfoEx>'
+    DIDL = DIDL + '    <res protocolInfo="http-get:*:text/srt:*">' + subtitle + '</res>'
+  }
+  DIDL = DIDL + '    <upnp:class>object.item.videoItem</upnp:class>'
+  DIDL = DIDL + '    <res protocolInfo="http-get:*:' + type + ':DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" sec:URIType="public">' + url + '</res>'
+  DIDL = DIDL + '  </item>'
+  DIDL = DIDL + '</DIDL-Lite>'
+  return DIDL
 }
 
 var discover = function (cb) {
-  var cli = new Client()
+  var finder = new RendererFinder()
 
-  if (!cb) cb = noop
-
-  var clean = function () {
-    cli.removeListener('response', onResponse)
-    cli._stop()
+  finder.findOne(function (err, info, msg) {
     clearTimeout(to)
-  }
+    cb(err, msg.Location)
+  })
 
   var to = setTimeout(function () {
-    clean()
+    finder.stop()
+    clearTimeout(to)
     cb(new Error('device not found'))
   }, 5000)
-
-  var onResponse = function (meta, status, machine) {
-    if (opts.address && opts.address !== machine.address) return
-    clean()
-    cb(null, meta.LOCATION)
-  }
-
-  cli.on('response', onResponse)
-  cli.search('urn:schemas-upnp-org:device:MediaRenderer:1')
 }
 
-discover(function (err, loc) {
-  if (err) {
-    console.log(err)
+module.exports = {
+  listRenderer: function (cb) {
+    var finder = new RendererFinder()
+
+    finder.on('found', function (info, msg, desc) {
+      cb(undefined, info, msg, desc)
+    })
+
+    finder.on('error', function (err) {
+      cb(err)
+    })
+
+    return finder.start(true)
+  },
+  renderMedia: function (file, type, address, subtitle) {
+    var cli = null
+
+    if (address) {
+      startSender(null, address)
+    } else {
+      discover(startSender)
+    }
+
+    function startSender (err, loc) {
+      if (err) {
+        console.log(err)
+        if (require.main === module) {
+          process.exit()
+        }
+      }
+      cli = new MediaRendererClient(loc)
+      var subtitlePath = subtitle
+      var filePath = file
+      var stat = fs.statSync(filePath)
+      stat.type = stat.type || mime.lookup(filePath)
+      var firstHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'transferMode.dlna.org': 'Streaming',
+        'contentFeatures.dlna.org': 'DLNA.ORG_PN=AVC_MP4_HP_HD_AAC;DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000'
+      }
+
+      // If the is a subtitle to load, load that first and the the media
+      // This is requires to provide the subtitle headers
+      smfs.serve(subtitlePath ? subtitlePath : filePath, {
+        headers: firstHeaders
+      }, function (err, firstUrl) {
+        if (err) {
+          console.log(err)
+          if (require.main === module) {
+            process.exit()
+          }
+        }
+        if (subtitlePath) {
+          firstHeaders['CaptionInfo.sec'] = firstUrl
+          smfs.serve(filePath, {
+            headers: firstHeaders
+          }, function (err, secondUrl) {
+            if (err) {
+              console.log(err)
+              if (require.main === module) {
+                process.exit()
+              }
+            }
+            runDLNA(secondUrl, firstUrl, stat)
+          }, firstUrl)
+        } else {
+          runDLNA(firstUrl, null, stat)
+        }
+      })
+
+      function runDLNA (fileUrl, subUrl, stat) {
+        if (require.main === module) {
+          keypress(process.stdin)
+          process.stdin.setRawMode(true)
+          process.stdin.resume()
+        }
+        var isPlaying = false
+
+        cli.load(fileUrl, {
+          autoplay: true,
+          contentType: stat.type,
+          metadata: DIDLMetadata(fileUrl, stat.type, path.basename(filePath), subUrl)
+        }, function (err, result) {
+          if (err) {
+            console.log(err.message)
+            // process.exit()
+          }
+          console.log('playing: ', path.basename(filePath))
+          console.log('use your space-key to toggle between play and pause')
+        })
+
+        cli.on('playing', function () {
+          isPlaying = true
+        })
+
+        cli.on('paused', function () {
+          isPlaying = false
+        })
+
+        cli.on('stopped', function () {
+          if (require.main === module) {
+            process.exit()
+          }
+        })
+
+        if (require.main === module) {
+          process.stdin.on('keypress', function (ch, key) {
+            if (key && key.name && key.name === 'space') {
+              if (isPlaying) {
+                cli.pause()
+              } else {
+                cli.play()
+              }
+            }
+
+            if (key && key.ctrl && key.name === 'c') {
+              process.exit()
+            }
+          })
+        }
+      }
+      return cli
+    }
+  }
+}
+
+// check if the module is called from a terminal of required from anothe module
+if (require.main === module) {
+  if (!opts._.length && !opts.listRenderer) {
+    console.log('Usage: dlnacast [--type <mime>] [--address <tv-ip>] [--subtitle <file>] <file>')
+    console.log('Usage: dlnacast --listRenderer')
     process.exit()
   }
 
-  getPort(function (err, port) {
-    if (err) {
-      console.log(err)
-      process.exit()
-    }
-
-    var cli = new MediaRendererClient(loc)
-    var url = 'http://' + internalIp() + ':' + port
-    var filePath = opts._[0]
-    var stat = fs.statSync(filePath)
-    var total = stat.size
-    var type = opts.type || mime.lookup(filePath)
-    var isPlaying = false
-
-    // Dirty hack to support MKV on my Samsung TV..
-    // I have no idea if other TV manufactures also require this..
-    if (!opts.type && type === 'video/x-matroska') {
-      type = 'video/x-mkv'
-    }
-
-    keypress(process.stdin)
-    process.stdin.setRawMode(true)
-    process.stdin.resume()
-
-    var server = http.createServer(function (req, res) {
-      var range = req.headers.range
-
-      res.setHeader('Content-Type', type)
-      res.setHeader('Access-Control-Allow-Origin', '*')
-      res.setHeader('transferMode.dlna.org', 'Streaming')
-      res.setHeader('contentFeatures.dlna.org', 'DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000')
-
-      if (!range) {
-        res.setHeader('Content-Length', total)
-        res.statusCode = 200
-        return fs.createReadStream(filePath).pipe(res)
-      }
-
-      var part = rangeParser(total, range)[0]
-      var chunksize = (part.end - part.start) + 1
-      var file = fs.createReadStream(filePath, {start: part.start, end: part.end})
-
-      res.setHeader('Content-Range', 'bytes ' + part.start + '-' + part.end + '/' + total)
-      res.setHeader('Accept-Ranges', 'bytes')
-      res.setHeader('Content-Length', chunksize)
-      res.statusCode = 206
-
-      return file.pipe(res)
-    })
-
-    cli.load(url, { autoplay: true, contentType: type }, function (err, result) {
+  if (opts.listRenderer) {
+    module.exports.listRenderer(function (err, info, msg, desc) {
       if (err) {
+        console.log(err)
         process.exit()
       }
-      console.log('playing: ', filePath)
-      console.log('use your space-key to toggle between play and pause')
+      console.log(desc.device.friendlyName + ': ' + msg.Location)
     })
-
-    cli.on('playing', function () {
-      isPlaying = true
-    })
-
-    cli.on('paused', function () {
-      isPlaying = false
-    })
-
-    process.stdin.on('keypress', function (ch, key) {
-      if (key && key.name && key.name === 'space') {
-        if (isPlaying) {
-          cli.pause()
-        } else {
-          cli.play()
-        }
-      }
-
-      if (key && key.ctrl && key.name === 'c') {
-        process.exit()
-      }
-    })
-
-    server.listen(port)
-  })
-
-})
+  } else {
+    module.exports.renderMedia(opts._[0], opts.type, opts.address, opts.subtitle)
+  }
+}

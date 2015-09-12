@@ -6,7 +6,8 @@ Based on thibauts [node-upnp-mediarenderer-client](https://github.com/thibauts/n
 ### usage
 
 ```
-dlnacast [--type <mime>] [--address <tv-ip>] <file>
+dlnacast [--type <mime>] [--address <tv-ip>] [--subtitle <file>] <file>
+dlnacast --listRenderer
 ```
 
 ### installation
