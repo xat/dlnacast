@@ -27,6 +27,58 @@ function DIDLMetadata (url, type, title, subtitle) {
   return DIDL
 }
 
+function runDLNA (cli, fileUrl, subUrl, type, name) {
+  if (require.main === module) {
+    keypress(process.stdin)
+    process.stdin.setRawMode(true)
+    process.stdin.resume()
+  }
+  var isPlaying = false
+
+  cli.load(fileUrl, {
+    autoplay: true,
+    contentType: type,
+    metadata: DIDLMetadata(fileUrl, type, name, subUrl)
+  }, function (err, result) {
+    if (err) {
+      console.log(err.message)
+      // process.exit()
+    }
+    console.log('playing: ', name)
+    console.log('use your space-key to toggle between play and pause')
+  })
+
+  cli.on('playing', function () {
+    isPlaying = true
+  })
+
+  cli.on('paused', function () {
+    isPlaying = false
+  })
+
+  cli.on('stopped', function () {
+    if (require.main === module) {
+      process.exit()
+    }
+  })
+
+  if (require.main === module) {
+    process.stdin.on('keypress', function (ch, key) {
+      if (key && key.name && key.name === 'space') {
+        if (isPlaying) {
+          cli.pause()
+        } else {
+          cli.play()
+        }
+      }
+
+      if (key && key.ctrl && key.name === 'c') {
+        process.exit()
+      }
+    })
+  }
+}
+
 var discover = function (cb) {
   var finder = new RendererFinder()
 
@@ -40,6 +92,24 @@ var discover = function (cb) {
     clearTimeout(to)
     cb(new Error('device not found'))
   }, 5000)
+}
+
+var connect = function (address, cb) {
+    if (address) {
+      connect_prepare(null, address)
+    } else {
+      discover(connect_prepare)
+    }
+    function connect_prepare(err, loc) {
+      if (err) {
+        console.log(err)
+        if (require.main === module) {
+          process.exit()
+        }
+      }
+      cli = new MediaRendererClient(loc)
+      cb(cli)
+    }
 }
 
 module.exports = {
@@ -56,27 +126,33 @@ module.exports = {
 
     return finder.start(true)
   },
-  renderMedia: function (file, type, address, subtitle) {
-    var cli = null
-
-    if (address) {
-      startSender(null, address)
-    } else {
-      discover(startSender)
-    }
-
-    function startSender (err, loc) {
-      if (err) {
-        console.log(err)
-        if (require.main === module) {
+  //TODO: this does not work yet
+  command: function(address, command) {
+      connect(address, function (cli) {
+          switch (command) {
+              case 'play':
+                  cli.play()
+                  break
+              case 'pause':
+                  console.log('pause')
+                  cli.pause()
+                  break
+              case 'stop':
+                  cli.stop()
+                  break
+              default:
+                  console.log('Error: unknown commmand')
+                  process.exit(1)
+                  break
+          }
           process.exit()
-        }
-      }
-      cli = new MediaRendererClient(loc)
+      })
+  },
+  renderMedia: function (file, type, address, subtitle) {
+    connect(address, function (cli) {
       var subtitlePath = subtitle
       var filePath = file
-      var stat = fs.statSync(filePath)
-      stat.type = stat.type || mime.lookup(filePath)
+      type = type || fs.statSync(filePath).type || mime.lookup(filePath)
       var firstHeaders = {
         'Access-Control-Allow-Origin': '*',
         'transferMode.dlna.org': 'Streaming',
@@ -105,78 +181,31 @@ module.exports = {
                 process.exit()
               }
             }
-            runDLNA(secondUrl, firstUrl, stat)
+            runDLNA(cli, secondUrl, firstUrl, type, path.basename(filePath))
           }, firstUrl)
         } else {
-          runDLNA(firstUrl, null, stat)
+          runDLNA(cli, firstUrl, null, type, path.basename(filePath))
         }
       })
-
-      function runDLNA (fileUrl, subUrl, stat) {
-        if (require.main === module) {
-          keypress(process.stdin)
-          process.stdin.setRawMode(true)
-          process.stdin.resume()
-        }
-        var isPlaying = false
-
-        cli.load(fileUrl, {
-          autoplay: true,
-          contentType: stat.type,
-          metadata: DIDLMetadata(fileUrl, stat.type, path.basename(filePath), subUrl)
-        }, function (err, result) {
-          if (err) {
-            console.log(err.message)
-            // process.exit()
-          }
-          console.log('playing: ', path.basename(filePath))
-          console.log('use your space-key to toggle between play and pause')
-        })
-
-        cli.on('playing', function () {
-          isPlaying = true
-        })
-
-        cli.on('paused', function () {
-          isPlaying = false
-        })
-
-        cli.on('stopped', function () {
-          if (require.main === module) {
-            process.exit()
-          }
-        })
-
-        if (require.main === module) {
-          process.stdin.on('keypress', function (ch, key) {
-            if (key && key.name && key.name === 'space') {
-              if (isPlaying) {
-                cli.pause()
-              } else {
-                cli.play()
-              }
-            }
-
-            if (key && key.ctrl && key.name === 'c') {
-              process.exit()
-            }
-          })
-        }
-      }
       return cli
-    }
+    })
+  },
+  renderStream: function (url, type, address) {
+    //TODO autodetect type?
+    type = type || "audio/mpeg"
+    connect(address, function (cli) {
+      //TODO autodetect stream name?
+      runDLNA(cli, url, null, type, "Stream")
+    })
   }
 }
 
 // check if the module is called from a terminal of required from anothe module
 if (require.main === module) {
-  if (!opts._.length && !opts.listRenderer) {
-    console.log('Usage: dlnacast [--type <mime>] [--address <tv-ip>] [--subtitle <file>] <file>')
-    console.log('Usage: dlnacast --listRenderer')
-    process.exit()
-  }
-
-  if (opts.listRenderer) {
+  var address = opts.address ? opts.address : opts.a
+  if (opts.command || opts.c) {
+    module.exports.command(address, opts.command ? opts.command : opts.c)
+  } else if (opts.listRenderer || opts.l) {
     module.exports.listRenderer(function (err, info, msg, desc) {
       if (err) {
         console.log(err)
@@ -184,7 +213,14 @@ if (require.main === module) {
       }
       console.log(desc.device.friendlyName + ': ' + msg.location)
     })
+  } else if (opts.stream) {
+    module.exports.renderStream(opts.stream, opts.type, address)
+  } else if (opts._.length) {
+    module.exports.renderMedia(opts._[0], opts.type, address, opts.subtitle)
   } else {
-    module.exports.renderMedia(opts._[0], opts.type, opts.address, opts.subtitle)
+    console.log('Usage: dlnacast [--type <mime>] [--address <tv-ip>] [--subtitle <file>] <file>')
+    console.log('Usage: dlnacast [--type <mime>] [--address <tv-ip>] --stream <URL>')
+    console.log('Usage: dlnacast --listRenderer')
+    process.exit()
   }
 }
