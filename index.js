@@ -32,7 +32,7 @@ var discover = function (cb) {
 
   finder.findOne(function (err, info, msg) {
     clearTimeout(to)
-    cb(err, msg.Location)
+    cb(err, msg.location)
   })
 
   var to = setTimeout(function () {
@@ -182,7 +182,7 @@ if (require.main === module) {
         console.log(err)
         process.exit()
       }
-      console.log(desc.device.friendlyName + ': ' + msg.Location)
+      console.log(desc.device.friendlyName + ': ' + msg.location)
     })
   } else {
     module.exports.renderMedia(opts._[0], opts.type, opts.address, opts.subtitle)
